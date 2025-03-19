@@ -29,11 +29,13 @@ Natural_habitat <- read_excel("Data_raw/Natural_habitat.xlsx")
 Monitoring_data <- read_excel("Data_raw/Natural_habitat.xlsx", sheet = "Monitoring_data")
 Fish_data <- read_excel("Data_raw/Natural_habitat.xlsx", sheet = "Fish_data") %>% select(-starts_with("..."))
 
+
+
 # Combine monitoring, cpue, and natural habitat data ---------------------------
 # Calculate CPUE and BCUE by Site and Species and net_Type
 CPUE_BCUE <- Fish_data %>%
   filter(!is.na(Species)) %>%
-  group_by(Site_ID, Species,Net_type) %>%
+  group_by(Monitoring_ID, Species,Net_type) %>%
   reframe(
     Total_Individuals = sum(Amount, na.rm = T),
     Total_Weight = sum(Weight_g, na.rm = TRUE),
@@ -48,7 +50,7 @@ CPUE_BCUE <- Fish_data %>%
     Max_Weight = ifelse(all(is.na(Weight_g)), NA, max(Weight_g, na.rm = TRUE)))
 
 CPUE_BCUE_weighted <- CPUE_BCUE %>%
-  group_by(Site_ID, Species) %>%
+  group_by(Monitoring_ID, Species) %>%
   summarise(
     Total_Individuals = sum(Total_Individuals, na.rm = T),
     Total_Weight = sum(Total_Weight, na.rm = TRUE),
@@ -62,24 +64,27 @@ CPUE_BCUE_weighted <- CPUE_BCUE %>%
     
     Mean_Weight = mean(Mean_Weight, na.rm = TRUE),
     Min_Weight = ifelse(all(is.na(Min_Weight)), NA, min(Min_Weight, na.rm = TRUE)),
-    Max_Weight = ifelse(all(is.na(Max_Weight)), NA, max(Max_Weight, na.rm = TRUE))) %>%
+    Max_Weight = ifelse(all(is.na(Max_Weight)), NA, max(Max_Weight, na.rm = TRUE)) ) %>%
+  ungroup() %>%  
   mutate(
+    Total_Effort_sum = ifelse(Monitoring_ID %in% c("96_0", "101_0", "117_1", "119_1"), 3, 4),  
     Weighted_CPUE = Weighted_CPUE_numerator / Total_Effort_sum,
-    Weighted_BCUE = Weighted_BCUE_numerator / Total_Effort_sum)
+    Weighted_BCUE = Weighted_BCUE_numerator / Total_Effort_sum )
 
 # Create Presence/Absence Columns Based on Species Naming
 species_presence_absence <- Fish_data %>%
   filter(!is.na(Species)) %>%
-  distinct(Site_ID, Species) %>% # Keep unique combinations of Site_ID and Species
-  mutate(Presence = 1) %>%       # Mark species as present
+  distinct(Monitoring_ID, Species) %>% 
+  mutate(Presence = 1) %>%       
   pivot_wider(
     names_from = Species, 
     values_from = Presence, 
-    values_fill = list(Presence = 0), # Fill absence with 0
+    values_fill = list(Presence = 0), 
     names_prefix = "Presence_")
 
 
 # Create a metadata table with Parameter-Unit mappings
+Monitoring_data <- Monitoring_data %>%  select(-Site_ID)
 unit_metadata <- Monitoring_data %>%
   select(Parameter, Unit) %>%
   distinct()
@@ -88,7 +93,7 @@ unit_metadata <- Monitoring_data %>%
 Monitoring_CPUE_data <- Natural_habitat %>%
   left_join(Monitoring_data %>%
               select(-Group, -Notes, -Unit) %>%
-              group_by(Site_ID, Parameter) %>%
+              group_by(Monitoring_ID, Parameter) %>%
               mutate(
                 Parameter_num = ifelse(duplicated(Parameter), row_number(), NA)) %>%
               ungroup() %>%
@@ -97,15 +102,15 @@ Monitoring_CPUE_data <- Natural_habitat %>%
                 values_from = Value,
                 names_glue = "{Parameter}{ifelse(is.na(Parameter_num), '', paste0('_', Parameter_num))}",  # Remove the "_NA" from column names
                 values_fill = list(Value = NA)),
-            by = "Site_ID") %>%
+            by = "Monitoring_ID") %>%
   left_join(CPUE_BCUE_weighted %>%
               pivot_wider(
                 names_from = Species,
                 values_from = c(Total_Individuals, Weighted_CPUE, Weighted_BCUE, Total_Weight, Mean_Length, Mean_Weight, Min_Length, Max_Length, Min_Weight, Max_Weight, Weighted_CPUE_numerator, Weighted_BCUE_numerator, Total_Effort_sum),
                 names_sep = "_",
                 values_fill = list(Total_Individuals = 0, Weighted_CPUE = 0, Weighted_BCUE = 0)),
-            by = "Site_ID")%>%
-  left_join(species_presence_absence, by = "Site_ID")
+            by = "Monitoring_ID")%>%
+  left_join(species_presence_absence, by = "Monitoring_ID")
 
 
 
@@ -115,6 +120,11 @@ write.csv(Monitoring_CPUE_data, "Data_mod/Monitoring_CPUE_data.csv", row.names =
 # Save as Excel file
 write_xlsx(Monitoring_CPUE_data, "Data_mod/Monitoring_CPUE_data.xlsx")
 
+plot(Monitoring_CPUE_data$Total_Individuals_Kōura, Monitoring_CPUE_data$Total_Weight_Kōura)
+plot(Monitoring_CPUE_data$Weighted_CPUE_Kōura, Monitoring_CPUE_data$Weighted_BCUE_Kōura)
+plot(Monitoring_CPUE_data$Weighted_BCUE_Kōura, Monitoring_CPUE_data$Total_Weight_Kōura)
+
+
 
 
 
@@ -123,16 +133,44 @@ write_xlsx(Monitoring_CPUE_data, "Data_mod/Monitoring_CPUE_data.xlsx")
 # Explore the Raw data -----------------------------------------------------------
 ####### Explore Fish_data & Calculate CPUE
 names(Fish_data)
+
+species_summary <- Fish_data %>%
+  filter(!is.na(Species)) %>%  # Remove rows where Species is NA
+  group_by(Species) %>%
+  summarize(
+    Total_Records = n(),  
+    Sites_Present = n_distinct(Site_ID),
+    Avg_Length = mean(Length_mm, na.rm = TRUE),  
+    Avg_Weight = mean(Weight_g, na.rm = TRUE),   
+    Total_Amount = sum(Amount, na.rm = TRUE),    
+    Total_Weight = sum(Weight_g, na.rm = TRUE),  
+    Sites_Present = n_distinct(Site_ID),
+    .groups = 'drop')
+species_summary
+
 ggplot(Fish_data %>% 
-         filter(!Species %in% c("Bullies", "Common smelt", "Trout")) %>% 
-         filter(!is.na(Species)),
-       aes(Length_mm, Weight_g, col = Species)) +
-  geom_point(na.rm = FALSE) +
-  geom_smooth()+
+         filter(!Species %in% c("Bullies", "Common_smelt")) %>% 
+         filter(!is.na(Species)) %>% 
+         filter(!is.na(Length_mm)),
+       aes(x = Length_mm, fill = Sex)) +
+  geom_histogram(binwidth = 5, position = "dodge") +
+  facet_wrap(~Species, scales = "free") +
+  labs(title = "Histogram of Fish Length by Species and Sex") 
+
+ggplot(Fish_data %>% 
+         filter(!Species %in% c("Bullies", "Common_smelt", "Trout", "Catfish", "Eel")) %>% 
+         filter(!is.na(Species)) %>% 
+         filter(!is.na(Length_mm) & !is.na(Weight_g)),
+       aes(Length_mm, Weight_g, col = Sex)) +
+  geom_point() +
+  geom_smooth() +
   facet_wrap(~Species, scales = "free")
 
-Fish_data_2 <- Fish_data %>%
-  left_join(Natural_habitat, by = "Site_ID")
+Fish_data_2 <- Fish_data %>% 
+  left_join(Natural_habitat, by = "Monitoring_ID") %>% 
+  filter(!is.na(Monitoring_ID))
+
+
 
 # Calculate the total count
 total_count <- Fish_data_2 %>%
@@ -142,6 +180,11 @@ total_count <- Fish_data_2 %>%
 total_count_by_lake <- Fish_data_2 %>%
   filter(Species == "Kōura") %>%
   group_by(Lake) %>%
+  summarise(total_Kōura = n())
+
+total_count_by_lake_DHT <- Fish_data_2 %>%
+  filter(Species == "Kōura") %>%
+  group_by(Lake, DHT) %>%
   summarise(total_Kōura = n())
 
 # Create the histogram with the total count in the title
@@ -156,10 +199,22 @@ ggplot(Fish_data %>%
 
 ggplot(Fish_data %>% 
          filter(Species == "Kōura") %>% 
+         filter(!is.na(Length_mm)),
+       aes(x = Length_mm )) +
+  geom_histogram(binwidth = 1, color = "black", na.rm = TRUE) +
+  geom_vline(xintercept = c(22, 28), linetype = "dashed") +
+  annotate("text", x = 11, y = 27, label = "Small") +
+  annotate("text", x = 25, y = 27, label = "Medium") +
+  annotate("text", x = 35, y = 27, label = "Large") +
+  labs(x = "Length (mm)", 
+       y = "Count",title = paste("Histogram of Kōura Lengths (Total Count:", total_count, ")"))
+
+ggplot(Fish_data %>% 
+         filter(Species == "Kōura") %>% 
          filter(!is.na(Length_mm), !is.na(Sex)),
        aes(x = Length_mm, fill = Sex)) +
   geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) +
-  labs(x = "Length (mm)", 
+  labs(x = "OCL Length (mm)", 
        y = "Count", 
        fill = "Gender", 
        title = paste("Histogram of Kōura Lengths by Gender (Total Count:",total_count,")")) +
@@ -168,17 +223,80 @@ ggplot(Fish_data %>%
 
 
 names(Fish_data_2)
+Fish_data_2_summary <- Fish_data_2 %>%
+  filter(!is.na(Lake), !is.na(DHT)) %>%                  
+  distinct(Monitoring_ID, Net_type, .keep_all = TRUE) %>% 
+  group_by(DHT, Lake) %>%                                
+  summarise(
+    Sites_Monitored = n_distinct(Monitoring_ID),         
+    Total_Nets = sum(Amount_nets, na.rm = TRUE),  
+    .groups = "drop")
+
+Fish_data_2_summary <- Fish_data_2_summary %>%
+  left_join(total_count_by_lake_DHT, by = c("Lake", "DHT"))
+
+# Create the plot
 ggplot(Fish_data_2 %>% 
          filter(Species == "Kōura") %>% 
          filter(!is.na(Length_mm), !is.na(Sex)),
        aes(x = Length_mm, fill = Sex)) +
   geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) +
+  labs(x = "OCL Length (mm)", 
+       y = "Count", 
+       fill = "Gender", 
+       title = "Histogram of Kōura Lengths (Total Count:",total_count,")") +
+  facet_grid(DHT ~ Lake) + # Ensure each Lake has its own row/column
+  geom_text(data = Fish_data_2_summary, 
+            aes(x = Inf, y = Inf, 
+                label = paste("Sites:", Sites_Monitored, 
+                              "\nTotal Kōura:", total_Kōura)),
+            inherit.aes = FALSE,
+            hjust = 1.1, vjust = 1.1, size = 3) +  # Position and size adjustments
+  theme(legend.position = "top")
+
+
+
+
+# other species
+ggplot(Fish_data_2 %>% 
+         filter(Species == "Kōaro") %>% 
+         filter(!is.na(Length_mm)),
+       aes(x = Length_mm)) +
+  geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) 
+
+ggplot(Fish_data_2 %>% 
+         filter(Species == "Kōaro") %>% 
+         filter(!is.na(Length_mm)),
+       aes(x = Length_mm)) +
+  geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) +
   labs(x = "Length (mm)", 
        y = "Count", 
        fill = "Gender", 
-       title = paste("Histogram of Kōura Lengths by Gender (Total Count:", total_count, ")")) +
-  facet_wrap(~DHT+Lake ) + # Create facets for Gender
+       title = paste("Histogram of Kōaro Lengths")) +
+ facet_grid(DHT ~ Lake) + # Ensure each Lake has its own column
+  geom_text(data = Fish_data_2_summary, 
+            aes(x = Inf, y = Inf, label = paste("Sites:", Sites_Monitored)),
+            inherit.aes = FALSE,
+            hjust = 1.1, vjust = 1.1, size = 3) +
   theme(legend.position = "top")
+
+ggplot(Fish_data_2 %>% 
+         filter(Species == "Morihana") %>% 
+         filter(!is.na(Length_mm)),
+       aes(x = Length_mm)) +
+  geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) +
+  labs(x = "Length (mm)", 
+       y = "Count", 
+       fill = "Gender", 
+       title = paste("Histogram of Morihana Lengths")) +
+  facet_grid(DHT ~ Lake) + 
+  geom_text(data = Fish_data_2_summary, 
+            aes(x = Inf, y = Inf, label = paste("Sites:", Sites_Monitored)),
+            inherit.aes = FALSE,
+            hjust = 1.1, vjust = 1.1, size = 3) +
+  theme(legend.position = "top")
+
+
 
 # Bullies
 Bullies_data <- Fish_data_2 %>% filter(Species == "Bullies") 
@@ -189,11 +307,12 @@ summary(Bullies_data)
 weight_and_amount_available <- Bullies_data %>%
   filter(!is.na(Weight_g) & !is.na(Amount))
 
-# Calculate the average weight per bully at each site
-average_weight_per_bully <- weight_and_amount_available %>%
-  group_by(Site_ID) %>%
-  summarise(Average_Weight_per_Bully_g = sum(Weight_g) / sum(Amount))
+# Calculate the weight per bully for each row
+weight_and_amount_available <- weight_and_amount_available %>%
+  mutate(weight_per_bully = Weight_g / Amount)
 
+# Calculate the average weight per bully across all rows
+Average_Weight_per_Bully_g <- mean(weight_and_amount_available$weight_per_bully, na.rm = TRUE)
 
 # Calculate total weight, total amount, total volume, and average weight in a single summarise call
 total_bullies_info <- Bullies_data %>%
@@ -222,15 +341,15 @@ Bullie_check <- M_C_data %>% select(Site_ID, DHT, Total_Individuals_Bullies, Wei
 
 
 # plot CPUE and BCUE by Site and Species and net_Type
-ggplot(CPUE_BCUE_weighted, aes(x = factor(Site_ID), y = Weighted_CPUE , fill = Species)) +
+ggplot(CPUE_BCUE_weighted, aes(x = factor(Monitoring_ID), y = Weighted_CPUE , fill = Species)) +
   geom_bar(stat = "identity", position = "dodge") 
 
-ggplot(CPUE_BCUE_weighted, aes(x = factor(Site_ID), y = Weighted_BCUE, fill = Species)) +
+ggplot(CPUE_BCUE_weighted, aes(x = factor(Monitoring_ID), y = Weighted_BCUE, fill = Species)) +
   geom_bar(stat = "identity", position = "dodge") 
 
 
-ggplot(CPUE_BCUE_weighted %>% filter(!Species %in% c("Bullies", "Common_smelt")),
-  aes(x = factor(Site_ID), y = Weighted_CPUE, fill = Species)) +
+ggplot(CPUE_BCUE_weighted %>% filter(Species %in% c("Kōura", "Kōaro")),
+  aes(x = factor(Monitoring_ID), y = Weighted_CPUE, fill = Species)) +
   geom_bar(stat = "identity", position = "dodge") 
 
 

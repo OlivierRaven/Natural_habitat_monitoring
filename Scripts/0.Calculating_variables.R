@@ -25,7 +25,23 @@ lapply(packages, function(pkg) {
 
 
 # Import the data sets ---------------------------------------------------------
-### Lake perimeter:
+### Monitoring sites: -------------------------------------------------------------
+All_sample_sites <- read_excel("~/PhD/Data/Lakes/All_lakes/Lakes_Monitoring.xlsx", 
+                               sheet = "Monitoring_Sites")
+# Create an sf object for All_sample_sites
+All_sample_sites <- All_sample_sites %>% filter(!is.na(Lon))
+All_sample_sites_sf <- st_as_sf(All_sample_sites, coords = c("Lon", "Lat"), crs = 4326)  # Assuming WGS84 for lat/lon coords
+All_sample_sites_sf <- st_transform(All_sample_sites_sf, crs = 2193)  # Reproject to NZGD2000
+
+# Filter sites for each lake
+Sites_Rotorua <- All_sample_sites_sf %>% filter(Lake == "Lake Rotorua")
+Sites_Rotoiti <- All_sample_sites_sf %>% filter(Lake == "Lake Rotoiti")
+Sites_Rotoehu <- All_sample_sites_sf %>% filter(Lake == "Lake Rotoehu")
+Sites_Rotomā  <- All_sample_sites_sf %>% filter(Lake == "Lake Rotomā")
+Sites_Ōkāreka <- All_sample_sites_sf %>% filter(Lake == "Lake Ōkāreka")
+
+
+### Lake perimeter: ------------------------------------------------------------
 Rotorua <- st_read("Data_raw/Lakes_perimeter/Lake Rotorua.gpkg")
 Rotoiti <- st_read("Data_raw/Lakes_perimeter/Lake Rotoiti.gpkg")
 Rotoehu <- st_read("Data_raw/Lakes_perimeter/Lake Rotoehu.gpkg")
@@ -45,8 +61,14 @@ Rotoehu_outline <- st_transform(Rotoehu_outline, crs = 2193)
 Rotomā_outline  <- st_transform(Rotomā_outline, crs = 2193)
 Ōkāreka_outline <- st_transform(Ōkāreka_outline, crs = 2193)
 
+combined_outlines <- bind_rows(Rotorua_outline, Rotoiti_outline, Rotoehu_outline, Rotomā_outline, Ōkāreka_outline)
+combined_outlines <- st_transform(combined_outlines, crs = 2193)
 
-### Lake Bathmetry
+
+
+
+
+### Lake Bathmetry: ------------------------------------------------------------
 Rotlakes_bathymetry <- read_excel("~/PhD/Data/Lakes/Lakes_waterquality/Data_raw/Rotlakes_bathymetry.xls")
 
 Bathymetry_Rotoiti <- read_excel("Data_raw/Bathymetry_Rotoiti.xlsx")
@@ -66,22 +88,76 @@ ggplot()+
   geom_sf(data=Rotoiti_bath_25_sf)
 
 
+### Lake Bathmetry Lernzmp: ----------------------------------------------------
 
-### Monitoring sites:
-All_sample_sites <- read_excel("~/PhD/Data/Lakes/All_lakes/Lakes_Monitoring.xlsx", 
-                               sheet = "Monitoring_Sites")
-# Create an sf object for All_sample_sites
-All_sample_sites_sf <- st_as_sf(All_sample_sites, coords = c("Lon", "Lat"), crs = 4326)  # Assuming WGS84 for lat/lon coords
-All_sample_sites_sf <- st_transform(All_sample_sites_sf, crs = 2193)  # Reproject to NZGD2000
+#Please find attached a zip file with the lake bathymetrys as ".tif" files. 
+#These can be read in to R using the "terra" package. 
+#There are functions within that package to calculate slope/aspect/hillshade etc. 
+#They are all in the CRS: NZGD2000 are at 2m resolution. 
+#Would also recommend the "tmap" package for generating nice visualisations. 
 
-# Filter sites for each lake
-Sites_Rotorua <- All_sample_sites_sf %>% filter(Lake == "Lake Rotorua")
-Sites_Rotoiti <- All_sample_sites_sf %>% filter(Lake == "Lake Rotoiti")
-Sites_Rotoehu <- All_sample_sites_sf %>% filter(Lake == "Lake Rotoehu")
-Sites_Rotomā  <- All_sample_sites_sf %>% filter(Lake == "Lake Rotomā")
-Sites_Ōkāreka <- All_sample_sites_sf %>% filter(Lake == "Lake Ōkāreka")
+# Define the list of packages
+packages <- c("sf","tmap","terra", "readr", "readxl", "tidyverse", "dplyr", "ggplot2")
 
-### Meteorology Data:
+# Load packages if not already installed
+lapply(packages, function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE))
+    install.packages(pkg, dependencies = TRUE)
+  library(pkg, character.only = TRUE)})
+
+# Import the data  
+folder_path <- "Data_raw/bathy_oraven_Jan2025"
+
+tif_files <- list.files(folder_path, pattern = "\\.tif$", full.names = TRUE)
+
+
+# Load rasters into a list and rename them based on the filename
+lake_rasters <- lapply(tif_files, function(file) {
+  lake_name <- tools::file_path_sans_ext(basename(file))  # Extract filename without extension
+  r <- rast(file)  # Load raster
+  names(r) <- lake_name  # Rename the raster layer
+  return(r)})
+
+# Name the list elements by lake name
+names(lake_rasters) <- sapply(tif_files, function(file) tools::file_path_sans_ext(basename(file)))
+
+plot(lake_rasters[[5]])  
+
+
+# Loop through the first 5 lakes and plot each raster with black contour lines
+for (i in 1:5) {
+  r <- lake_rasters[[i]]
+  plot(r, main = paste("Lake", names(lake_rasters)[i]), col = terrain.colors(100))
+  contour(r, add = TRUE, col = "black")}
+
+
+
+# Create data frames for each of the lakes in the list
+lake_data_frames <- lapply(names(lake_rasters), function(lake_name) {
+  r <- lake_rasters[[lake_name]]
+  r_df <- as.data.frame(r, xy = TRUE, na.rm = TRUE)  
+  r_df$lake <- lake_name  
+  
+  return(r_df)
+})
+names(lake_data_frames) <- names(lake_rasters)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Meteorology Data: ----------------------------------------------------------
 Meteorology <- read.csv("C:/1.PhD stuff/AEM3D/Rotoiti_wall_125/run/infiles/Meteorology_sans_cloud.dat", 
                         header = TRUE, skip = 14, sep = "", stringsAsFactors = FALSE, 
                         colClasses = c("character", rep("numeric", 7)))

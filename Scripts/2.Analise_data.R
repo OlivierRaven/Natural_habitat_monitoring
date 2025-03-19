@@ -15,7 +15,7 @@ cat("\014"); rm(list = ls())#; dev.off()
 setwd("~/PhD/Data/3. Natural habitat monitoring")
 
 # Define the list of packages
-packages <- c("tidyverse", "dplyr", "ggplot2","readxl", "writexl","readr")
+packages <- c("sf", "mgcv","tidyverse", "dplyr", "ggplot2","readxl", "writexl","readr")
 
 # Load packages if not already installed
 lapply(packages, function(pkg) {
@@ -25,30 +25,77 @@ lapply(packages, function(pkg) {
 
 
 # Import the data sets ---------------------------------------------------------
-#Monitoring_CPUE_data <- read_excel("Data_mod/Monitoring_CPUE_data.xlsx")
-
 Monitoring_CPUE_data <- read_csv("Data_mod/Monitoring_CPUE_data.csv")
 
 # Start analisis ---------------------------------------------------------------
-# View the structure and summary of the dataset
+# View the structure and summary of the data set
 names(Monitoring_CPUE_data)
 str(Monitoring_CPUE_data)
 summary(Monitoring_CPUE_data)
 
-# Remove rows where Date_Time is NA
-M_C_data <- Monitoring_CPUE_data %>% filter(!is.na(Date_Time))
 
-# Ensure Date_Time is in POSIXct format
-M_C_data$Date_Time <- ymd_hms(M_C_data$Date_Time)
+M_C_data <- Monitoring_CPUE_data 
 
 # Convert Date_Time to numeric (seconds since 1970-01-01)
 M_C_data$Date_Time_Numeric <- as.numeric(M_C_data$Date_Time)
 
-# Optional: Check the first few rows to confirm conversion
-head(M_C_data[, c("Date_Time", "Date_Time_Numeric")])
+
+# Calculate Substrate Index (s) ------------------------------------------------
+# Define the lake order
+lake_order <- c("Rotorua", "Rotoiti", "Rotoehu", "Rotomā", "Ōkāreka")
+
+# Sediment analysis
+# Define a custom color palette
+sediment_colors <- c(
+  "Bedrock" = "gray50",
+  "Boulders" = "gray30",
+  "Cobble" = "brown",
+  "Gravel" = "burlywood",
+  "Sand" = "gold",
+  "Mud" = "saddlebrown",
+  "Organic_matter" = "darkgreen",
+  "Turf" = "forestgreen")
+
+# Select relevant columns and reshape the data
+sediment_data <- M_C_data %>%
+  select(Monitoring_ID,DHT , Lake, Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf) %>%
+  pivot_longer(cols = c(Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf), 
+               names_to = "Sediment_Type", values_to = "Percentage") %>%
+                 mutate(Lake = factor(Lake, levels = lake_order))
 
 
-### Calculate Substrate Index (s) 
+weed_data <- M_C_data %>%
+  select(Monitoring_ID,DHT , Lake, Emergent_weed, Submerged_weed,Wood_cover) %>%
+  pivot_longer(cols = c(Emergent_weed, Submerged_weed,Wood_cover), 
+               names_to = "Weeds", values_to = "Percentage") %>%
+  mutate(Lake = factor(Lake, levels = lake_order))
+
+presence_data <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake, Presence_Kōura,Presence_Catfish,Presence_Mosquitofish, Presence_Bullies, Presence_Kōaro, Presence_Common_smelt, Presence_Trout, Presence_Morihana, Presence_Eel) %>%
+  pivot_longer(cols = c(Presence_Kōura,Presence_Bullies,Presence_Catfish,Presence_Mosquitofish, Presence_Kōaro, Presence_Common_smelt, Presence_Trout, Presence_Morihana, Presence_Eel),
+               names_to = "Fish_Type",values_to = "Presence")%>%
+  mutate(Lake = factor(Lake, levels = lake_order))
+
+# Plot the data
+ggplot(sediment_data, aes(x = factor(Monitoring_ID), y = Percentage, fill = Sediment_Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = sediment_colors) +
+  labs(title = "Sediment Composition by Site",x = "Site ID",y = "Percentage (%)",fill = "Sediment Type") +
+  facet_grid(DHT ~ Lake, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0))
+
+ggplot(weed_data, aes(x = factor(Monitoring_ID), y = Percentage, fill = Weeds)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_grid(DHT ~ Lake, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0))
+
+ggplot(presence_data, aes(x = factor(Monitoring_ID), y = Presence, fill = Fish_Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Fish Presence by Site", x = "Site ID",y = "Presence", fill = "Fish Type") +
+  facet_grid(DHT ~ Lake, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
 # Define weights for each substrate (this can be adjusted)
 substrate_weights <- c(Bedrock= 0.08, Boulders= 0.09, Cobble= 0.10, Gravel = 0.06, Sand = 0.05, Mud = 0.02, Organic_matter = 0.04)
 
@@ -62,33 +109,228 @@ substrate_weights <- c(
   Organic_matter = 0.05  # Negative influence, reduced weight
 )
 
+substrate_weights <- c(
+  Bedrock = 0.07,  # Keep neutral influence
+  Boulders = 0.10, # Reduce weight (weak relationship)
+  Cobble = 0.08,   # Reduce weight (weak relationship)
+  Gravel = 0.07,   # Reduce slightly (weak relationship)
+  Sand = 0.15,     # Increase due to significant positive relationship
+  Mud = 0.05,      # Increase slightly, still negative
+  Organic_matter = -0.10  # Significant but negative influence
+)
+
 
 substrate_weights_J <- c(Bedrock= 0.08, Boulders= 0.07, Cobble= 0.06, Gravel = 0.05, Sand = 0.035, Mud = 0.035)
 
 substrate_values <- M_C_data[c("Bedrock","Boulders","Cobble", "Gravel", "Sand", "Mud", "Organic_matter")]
 
+substrate <- c("Bedrock", "Boulders", "Cobble", "Gravel", "Sand", "Mud", "Organic_matter")
+
 # Calculate the substrate index 
+# Loop through each variable and generate a boxplot
+for (var in substrate) {
+  p <- ggplot(M_C_data, aes(x = Presence_Kōura, y = get(var))) +
+    geom_boxplot() +
+    labs(x = "Presence of Kōura", y = var, title = paste("Boxplot of", var, "by Presence_Kōura"))
+  print(p)}
+
 M_C_data$Substrate_index <- rowSums(substrate_values * substrate_weights, na.rm = TRUE)
 
 names(M_C_data)
 summary(M_C_data)
 
-# List of variables to test
-variables <- c("CPUE_Kōura", 
-               "Slope","Distance_deep", "Riparian_vegetation","Overhanging_trees",
-               "Substrate_index", "Boulders","Gravel","Sand","Mud","Organic_matter","Turf",
-               "Temperature","DO_mgl","DO_percent","Connectivity","pH",
-               "Emergent_weed","Submerged_weed", "Wood_cover",
-               "CPUE_Bullies", "CPUE_Morihana","CPUE_Eel","CPUE_Common_smelt","CPUE_Kōaro","CPUE_Trout"
-               )
+#Create the 'presence_rocks' variable
+M_C_data <- M_C_data %>%
+  mutate(Presence_rocks = if_else(Cobble > 1 | Boulders > 1 | Bedrock > 1, 1, 0))
 
-variables <- c("Weighted_CPUE_Kōura", "Presence_Kōura",
-               "Date_Time_Numeric","Mean_depth(m)", "Distance_deep_20m", "Elevation(m)", "Slope", 
-               "Temperature", "DO_mgl", "DO_percent", "pH", "TLI", "Water_clarity",
-               "Boulders", "Cobble", "Gravel", "Sand", "Mud", "Organic_matter", "Substrate_index", 
+# List of variables to test
+variables <- c("Presence_Kōura","Total_Individuals_Kōura","Weighted_CPUE_Kōura", "Weighted_BCUE_Kōura",#"Total_Weight_Kōura",
+               "LID","Date_Time_Numeric","Mean_depth_m", "Elevation_m", "Slope",  "Distance_deep",
+               "Temperature", "DO_mgl", "DO_percent", "pH", "TLI", "Lake_water_clarity_m",
+               "Bedrock","Boulders", "Cobble", "Gravel", "Sand", "Mud", "Organic_matter","Presence_rocks", #"Substrate_index", 
                "Riparian_vegetation", "Overhanging_trees", 
                "Emergent_weed", "Submerged_weed", "Wood_cover",
-               "Presence_Kōaro", "Presence_Bullies","Presence_Common_smelt", "Presence_Trout", "Presence_Morihana", "Presence_Eel")
+               "Presence_Kōaro","Presence_Common_smelt", "Presence_Trout", "Presence_Morihana", "Presence_Eel",
+               "Weighted_CPUE_Morihana")
+
+
+Numeric_variables <- M_C_data %>% select_if(is.numeric) %>% names()
+# Make some plots to explore the data ------------------------------------------
+
+ggplot(M_C_data, aes(factor(Monitoring_ID), Weighted_CPUE_Kōura, fill=Lake)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~DHT, scales = "free")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0))
+
+ggplot(M_C_data, aes(Distance_deep,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point()
+
+ggplot(M_C_data, aes(TLI,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point() 
+
+ggplot(M_C_data, aes(Temperature,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point()
+
+ggplot(M_C_data, aes(Presence_Morihana,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point()
+
+ggplot(M_C_data, aes(Presence_Eel,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point()
+
+ggplot(M_C_data, aes(Overhanging_trees,Weighted_CPUE_Kōura, col=Lake)) +
+  geom_point()
+
+
+
+
+
+# Spatial plots
+M_C_data_sf <- M_C_data %>%
+  st_as_sf(coords = c("Lon", "Lat"), crs = 4326)
+
+ggplot() +
+  geom_sf(data=combined_outlines)+
+  geom_sf(data=M_C_data_sf, aes(fill=Weighted_CPUE_Kōura), shape=21, size=4)
+ 
+
+ggplot() +
+  geom_sf(data = Rotorua_outline) +
+  geom_sf(data = Rotoiti_outline) +
+  geom_sf(data = Rotoehu_outline) +
+  geom_sf(data = Rotomā_outline) +
+  geom_sf(data = Ōkāreka_outline) +
+ # geom_sf(data = combined_outlines) +
+  geom_sf(data = M_C_data_sf, aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "bottom", 
+        plot.title = element_text(size = 18, hjust = 0.5), 
+        strip.text = element_text(size = 14), 
+        panel.grid = element_blank()) +
+  facet_grid(~ Lake, ) +
+  labs(title = "Kōura Weighted CPUE with Site Locations", x = "Longitude", y = "Latitude")
+
+library(patchwork) # For combining plots
+
+# Create individual plots
+plot_rotorua <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Rotorua")) +
+  geom_sf(data = subset(M_C_data_sf, Lake == "Rotorua"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Rotorua", x = "Longitude", y = "Latitude")
+
+plot_rotoiti <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Rotoiti")) +
+  geom_sf(data = subset(M_C_data_sf, Lake == "Rotoiti"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Rotoiti", x = "Longitude", y = "Latitude")
+
+plot_rotoehu <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Rotoehu")) +
+  geom_sf(data = subset(M_C_data_sf, Lake == "Rotoehu"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Rotoehu", x = "Longitude", y = "Latitude")
+
+plot_rotoma <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Rotomā")) +
+  geom_sf(data = subset(M_C_data_sf, Lake == "Rotomā"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Rotomā", x = "Longitude", y = "Latitude")
+
+subset_early <- subset(M_C_data_sf, Lake == "Ōkāreka" & Date_Time <= as.Date("2024-12-31"))
+subset_late <- subset(M_C_data_sf, Lake == "Ōkāreka" & Date_Time > as.Date("2024-12-31"))
+
+plot_okareka_early <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Ōkāreka")) +
+  geom_sf(data = subset(subset_early, Lake == "Ōkāreka"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Ōkāreka early", x = "Longitude", y = "Latitude")
+
+plot_okareka_late <- ggplot() +
+  geom_sf(data = subset(combined_outlines, Lake == "Ōkāreka")) +
+  geom_sf(data = subset(subset_late, Lake == "Ōkāreka"), aes(fill = Weighted_CPUE_Kōura), shape = 21, size = 4) +
+  scale_fill_viridis_c(name = "Weighted CPUE Kōura") +
+  theme_bw() +
+  labs(title = "Lake Ōkāreka late", x = "Longitude", y = "Latitude")
+
+# Combine all plots
+(plot_rotorua | plot_rotoiti) / (plot_rotoehu | plot_rotoma | plot_okareka_early| plot_okareka_late)
+
+
+
+#
+# Time Effect of the monitoring on Koura catches -------------------------------
+# Plot some primarily data 
+ggplot(M_C_data, aes(x = Date_Time)) +
+  geom_point(aes(y = Weighted_CPUE_Kōura, color = "CPUE"), size = 1) +
+  geom_point(aes(y = Temperature, color = "Temperature"), size = 1) +
+  scale_color_manual(values = c("CPUE" = "blue", "Temperature" = "red")) +  # Set the colors for the lines
+  scale_y_continuous(
+    name = "CPUE", 
+    sec.axis = sec_axis(~ ., name = "Temperature")) 
+
+
+ggplot(M_C_data %>%
+         filter(Monitoring_ID %in% c("109_0", "109_1", "111_0", "111_1", "115_0", "115_1","116_0", "116_1", "117_0", "117_1", "119_0", "119_1")),)+
+  geom_point(aes(Monitoring_ID, Weighted_CPUE_Kōura), col="red")+
+  geom_point(aes(Monitoring_ID, Temperature), col="blue")
+
+
+# Filter the data for specific Monitoring_IDs
+Changeovertime <- M_C_data %>%
+  filter(Monitoring_ID %in% c("109_0", "109_1", "111_0", "111_1", "115_0", "115_1",
+                              "116_0", "116_1", "117_0", "117_1", "119_0", "119_1"))
+
+
+Changeovertime <- Changeovertime %>%
+  mutate(Site = sub("_.*", "", Monitoring_ID),
+         Timepoint = sub(".*_", "", Monitoring_ID))
+
+# Pair the data within each Site by Timepoint
+Changeovertime_wide <- Changeovertime %>%
+  group_by(Site) %>%
+  summarise(
+    Temperature_0 = Temperature[Timepoint == "0"],
+    Temperature_1 = Temperature[Timepoint == "1"],
+    Weighted_CPUE_Kōura_0 = Weighted_CPUE_Kōura[Timepoint == "0"],
+    Weighted_CPUE_Kōura_1 = Weighted_CPUE_Kōura[Timepoint == "1"]
+  ) %>%
+  ungroup()
+
+# Calculate changes in temperature and Weighted CPUE
+Changeovertime_wide <- Changeovertime_wide %>%
+  mutate(
+    Temp_Change = Temperature_1 - Temperature_0,
+    CPUE_Change = Weighted_CPUE_Kōura_1 - Weighted_CPUE_Kōura_0
+  )
+
+# Calculate average increases
+Average_Temp_Increase <- mean(Changeovertime_wide$Temp_Change, na.rm = TRUE)
+Average_CPUE_Increase <- mean(Changeovertime_wide$CPUE_Change, na.rm = TRUE)
+
+# Display averages
+cat("Average Temperature Increase:", Average_Temp_Increase, "\n")
+cat("Average Weighted CPUE Increase:", Average_CPUE_Increase, "\n")
+
+# Plot the data with temperature and Weighted CPUE changes
+ggplot(Changeovertime_wide, aes(x = Site)) +
+  geom_point(aes(y = Weighted_CPUE_Kōura_0, color = "Weighted CPUE (2024-10-31)"), size = 3) +
+  geom_point(aes(y = Weighted_CPUE_Kōura_1, color = "Weighted CPUE (2025-01-22)"), size = 3) +
+  geom_point(aes(y = Temperature_0, color = "Temperature (2024-10-31)"), size = 3) +
+  geom_point(aes(y = Temperature_1, color = "Temperature (2025-01-22)"), size = 3) +
+  labs(x = "Site", y = "Value", color = "Metric") +
+  ggtitle(paste("Changes in Temperature and Weighted CPUE for Kōura\n",
+                "Avg Temp Increase:", round(Average_Temp_Increase, 2),
+                "| Avg CPUE Increase:", round(Average_CPUE_Increase, 2))) +
+  theme_bw()
+
+
+
 
 # Presence/absence -------------------------------------------------------------
 
@@ -109,6 +351,11 @@ significant_results <- results_summary %>%
   filter(p_value < 0.05)
 
 print(significant_results)
+
+ggplot(M_C_data, aes(x = as.factor(Presence_Kōura), y = Sand   )) +
+  geom_jitter(width = 0.2, height = 0) 
+
+
 
 # Check normality --------------------------------------------------------------
 # Loop through each variable
@@ -136,9 +383,12 @@ for (var in variables) {
 # Create the pair plot
 pairs(M_C_data[, variables])
 
-# Correlation matrix -----------------------------------------------------------
+plot(M_C_data$Weighted_CPUE_Kōura, M_C_data$Date_Time_Numeric)
+
+# Correlation matrix ---------------Lake# Correlation matrix -------------------------------------------------Lake# Correlation matrix -----------------------------------------------------------
 library(reshape2)
-cor_matrix <- cor(M_C_data[, variables], method = "pearson") #"pearson", "spearman", "kendall"
+
+cor_matrix <- cor(M_C_data[, variables], method = "spearman")  # "pearson", "spearman", "kendall" # spearman chosen as
 
 # Melt the correlation matrix for ggplot2
 cor_matrix_melted <- melt(cor_matrix)
@@ -163,30 +413,30 @@ strong_correlations <- cor_matrix_melted %>%
 # GAM (Generalized Additive Model) -----------------------------------------------
 library(mgcv)
 
-summary(M_C_data)
-# Fit a GAM model
-gam_model <- gam(Weighted_CPUE_Kōura ~ variables,
-                 family = poisson(link = "log"), data = M_C_data)
+# Fit the GAM model with adjusted degrees of freedom (k)
+gam_model <- gam(Weighted_CPUE_Kōura ~ s(Boulders, k = 3) + s(Overhanging_trees, k = 3) + 
+                    s(Weighted_CPUE_Morihana, k = 4),
+                 family = poisson(link = "log"),
+                 data = M_C_data)
 
+gam_model <- gam(Presence_Kōura ~ s(Presence_Morihana, k = 1), 
+                 family = binomial(link = "logit"), 
+                 data = M_C_data)
+plot(gam_model, pages = 1)
 
-gam_model <- gam(Weighted_CPUE_Kōura ~ s(Distance_deep_20m, k = 5) + s(Riparian_vegetation, k = 5) + 
-                   s(Overhanging_trees, k = 5) + Boulders + Gravel + Sand + 
-                   Mud + Organic_matter + Turf + Emergent_weed + 
-                   Submerged_weed + Wood_cover, 
-                 family = poisson, data = M_C_data)
-
-# Summarize the GAM model
+# Summarize the model
 summary(gam_model)
 
-plot(gam_model, pages = 1, main = "GAM Smooth Terms for CPUE_Kōura")
-
-
+plot(gam_model, pages = 1)
 
 # GLM --------------------------------------------------------------------------
-glm_model <- glm(CPUE_Kōura ~ Distance_deep + Riparian_vegetation + Overhanging_trees + 
-                   Bedrock + Boulders + Cobble + Gravel + Sand + Mud + Organic_matter + 
-                   Temperature + DO_mgl + DO_percent + Connectivity + pH + 
-                   Emergent_weed + Submerged_weed + Wood_cover+ CPUE_Bullies +CPUE_Morihana+ CPUE_Eel+CPUE_Common_smelt+CPUE_Kōaro+CPUE_Trout,
+formula_string <- paste("Weighted_CPUE_Kōura ~", paste(variables, collapse = " + "))
+glm_model <- glm(as.formula(formula_string),
+                 family = poisson(link = "log"), 
+                 data = M_C_data)
+
+
+glm_model <- glm(Weighted_CPUE_Kōura ~ Boulders+Wood_cover+Presence_Morihana+Submerged_weed  ,
                  family = poisson(link = "log"), 
                  data = M_C_data)
 
@@ -202,6 +452,8 @@ predictor_data_scaled <- scale(predictor_data)
 pca_result <- prcomp(predictor_data_scaled, scale. = TRUE)
 summary(pca_result)
 biplot(pca_result)
+
+
 
 
 # NMDS (Non-Metric Multidimensional Scaling) ---------------------------------------------------------------
