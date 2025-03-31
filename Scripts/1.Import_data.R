@@ -25,10 +25,10 @@ lapply(packages, function(pkg) {
 
 
 # Import the data sets ---------------------------------------------------------
-Natural_habitat <- read_excel("Data_raw/Natural_habitat.xlsx")
+Site_info <- read_excel("Data_raw/Natural_habitat.xlsx")
 Monitoring_data <- read_excel("Data_raw/Natural_habitat.xlsx", sheet = "Monitoring_data")
+Weed_data <- read_excel("Data_raw/Natural_habitat.xlsx", sheet = "Weed_data")  %>% select(-starts_with("..."))
 Fish_data <- read_excel("Data_raw/Natural_habitat.xlsx", sheet = "Fish_data") %>% select(-starts_with("..."))
-
 
 
 # Combine monitoring, cpue, and natural habitat data ---------------------------
@@ -90,7 +90,7 @@ unit_metadata <- Monitoring_data %>%
   distinct()
 
 # Pivot wider without modifying column names
-Monitoring_CPUE_data <- Natural_habitat %>%
+Monitoring_CPUE_data <- Site_info %>%
   left_join(Monitoring_data %>%
               select(-Group, -Notes, -Unit) %>%
               group_by(Monitoring_ID, Parameter) %>%
@@ -112,7 +112,10 @@ Monitoring_CPUE_data <- Natural_habitat %>%
             by = "Monitoring_ID")%>%
   left_join(species_presence_absence, by = "Monitoring_ID")
 
-
+# Add new columns for Site_ID_adjusted and Monitoring_ID_adjusted
+Monitoring_CPUE_data <- Monitoring_CPUE_data %>%
+  mutate(Site_ID_ = Site_ID - 60,
+    Monitoring_ID_ = paste0(as.numeric(sub("_.*", "", Monitoring_ID)) - 60, sub("^[^_]*", "", Monitoring_ID)))
 
 # Save as CSV
 write.csv(Monitoring_CPUE_data, "Data_mod/Monitoring_CPUE_data.csv", row.names = FALSE)
@@ -132,6 +135,9 @@ plot(Monitoring_CPUE_data$Weighted_BCUE_Kōura, Monitoring_CPUE_data$Total_Weigh
 
 # Explore the Raw data -----------------------------------------------------------
 ####### Explore Fish_data & Calculate CPUE
+# Define the lake order
+lake_order <- c("Rotorua", "Rotoiti", "Rotoehu", "Rotomā", "Ōkāreka")
+
 names(Fish_data)
 
 species_summary <- Fish_data %>%
@@ -166,11 +172,11 @@ ggplot(Fish_data %>%
   geom_smooth() +
   facet_wrap(~Species, scales = "free")
 
+
+### do calculations 
 Fish_data_2 <- Fish_data %>% 
   left_join(Natural_habitat, by = "Monitoring_ID") %>% 
   filter(!is.na(Monitoring_ID))
-
-
 
 # Calculate the total count
 total_count <- Fish_data_2 %>%
@@ -187,6 +193,22 @@ total_count_by_lake_DHT <- Fish_data_2 %>%
   group_by(Lake, DHT) %>%
   summarise(total_Kōura = n())
 
+# Calculate size class counts
+size_class_counts <- Fish_data %>%
+  filter(Species == "Kōura", !is.na(Length_mm)) %>%
+  mutate(Size_Class = case_when(
+    Length_mm < 22 ~ "Small",
+    Length_mm >= 22 & Length_mm < 30 ~ "Medium",
+    Length_mm >= 30 ~ "Large"
+  )) %>%
+  group_by(Size_Class) %>%
+  summarise(Count = n())
+
+# Extract counts for each size class
+small_count <- size_class_counts %>% filter(Size_Class == "Small") %>% pull(Count)
+medium_count <- size_class_counts %>% filter(Size_Class == "Medium") %>% pull(Count)
+large_count <- size_class_counts %>% filter(Size_Class == "Large") %>% pull(Count)
+
 # Create the histogram with the total count in the title
 ggplot(Fish_data %>% 
          filter(Species == "Kōura") %>% 
@@ -200,14 +222,15 @@ ggplot(Fish_data %>%
 ggplot(Fish_data %>% 
          filter(Species == "Kōura") %>% 
          filter(!is.na(Length_mm)),
-       aes(x = Length_mm )) +
+       aes(x = Length_mm)) +
   geom_histogram(binwidth = 1, color = "black", na.rm = TRUE) +
-  geom_vline(xintercept = c(22, 28), linetype = "dashed") +
-  annotate("text", x = 11, y = 27, label = "Small") +
-  annotate("text", x = 25, y = 27, label = "Medium") +
-  annotate("text", x = 35, y = 27, label = "Large") +
+  geom_vline(xintercept = c(22, 30), linetype = "dashed") +
+  annotate("text", x = 11, y = 27, label = paste("Small (n=", small_count, ")", sep = "")) +
+  annotate("text", x = 26, y = 27, label = paste("Medium (n=", medium_count, ")", sep = "")) +
+  annotate("text", x = 35, y = 27, label = paste("Large (n=", large_count, ")", sep = "")) +
   labs(x = "Length (mm)", 
-       y = "Count",title = paste("Histogram of Kōura Lengths (Total Count:", total_count, ")"))
+       y = "Count", 
+       title = paste("Histogram of Kōura Lengths (Total Count:", sum(size_class_counts$Count), ")"))
 
 ggplot(Fish_data %>% 
          filter(Species == "Kōura") %>% 
@@ -235,34 +258,42 @@ Fish_data_2_summary <- Fish_data_2 %>%
 Fish_data_2_summary <- Fish_data_2_summary %>%
   left_join(total_count_by_lake_DHT, by = c("Lake", "DHT"))
 
+CPUE_by_lake <- Fish_data_2_summary %>%
+  group_by(Lake) %>% 
+  summarise(
+    total_Kōura = sum(total_Kōura, na.rm = TRUE),
+    total_sites = sum(Sites_Monitored, na.rm = TRUE),
+    CPUE = total_Kōura / total_sites)
+
 # Create the plot
 ggplot(Fish_data_2 %>% 
+         filter(DHT != "Muddy") %>%
          filter(Species == "Kōura") %>% 
          filter(!is.na(Length_mm), !is.na(Sex)),
        aes(x = Length_mm, fill = Sex)) +
   geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) +
-  labs(x = "OCL Length (mm)", 
-       y = "Count", 
-       fill = "Gender", 
-       title = "Histogram of Kōura Lengths (Total Count:",total_count,")") +
-  facet_grid(DHT ~ Lake) + # Ensure each Lake has its own row/column
-  geom_text(data = Fish_data_2_summary, 
-            aes(x = Inf, y = Inf, 
-                label = paste("Sites:", Sites_Monitored, 
-                              "\nTotal Kōura:", total_Kōura)),
-            inherit.aes = FALSE,
-            hjust = 1.1, vjust = 1.1, size = 3) +  # Position and size adjustments
+  labs(x = "OCL Length (mm)", y = "Count",fill = "Gender")+
+  facet_grid(DHT ~ Lake) + 
+  geom_text(data = (Fish_data_2_summary%>% 
+              filter(DHT != "Muddy")), aes(x = Inf, y = Inf, label = paste("Sites:", Sites_Monitored,"\nTotal Kōura:", total_Kōura)),inherit.aes = FALSE,hjust = 1.1, vjust = 1.1, size = 3) + 
   theme(legend.position = "top")
 
 
 
 
 # other species
+total_Kōaro <- Fish_data_2 %>%
+  filter(Species == "Kōaro") %>%
+  nrow()
+
 ggplot(Fish_data_2 %>% 
          filter(Species == "Kōaro") %>% 
          filter(!is.na(Length_mm)),
-       aes(x = Length_mm)) +
-  geom_histogram(binwidth = 3, color = "black", position = "dodge", na.rm = TRUE) 
+       aes(x = Length_mm, fill =Lake)) +
+  geom_histogram(binwidth = 3, position = "dodge", na.rm = TRUE) +
+  labs(x = "Length (mm)", 
+       y = "Count", 
+       title = paste("Histogram of Kōaro Lengths (Total Count:", total_Kōaro,")"))
 
 ggplot(Fish_data_2 %>% 
          filter(Species == "Kōaro") %>% 

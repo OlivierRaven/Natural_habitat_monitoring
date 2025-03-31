@@ -15,7 +15,7 @@ cat("\014"); rm(list = ls())#; dev.off()
 setwd("~/PhD/Data/3. Natural habitat monitoring")
 
 # Define the list of packages
-packages <- c("sf", "mgcv","tidyverse", "dplyr", "ggplot2","readxl", "writexl","readr")
+packages <- c("patchwork", "sf", "mgcv","tidyverse", "dplyr", "ggplot2","readxl", "writexl","readr")
 
 # Load packages if not already installed
 lapply(packages, function(pkg) {
@@ -36,64 +36,25 @@ summary(Monitoring_CPUE_data)
 
 M_C_data <- Monitoring_CPUE_data 
 
-# Convert Date_Time to numeric (seconds since 1970-01-01)
-M_C_data$Date_Time_Numeric <- as.numeric(M_C_data$Date_Time)
+# Extract additional date and time components
+M_C_data <- M_C_data %>%
+  mutate(
+    Date = as.Date(Date_Time),                      
+    Time = format(Date_Time, "%H:%M:%S"),
+    Year = year(Date_Time),
+    Month = month(Date_Time, label = TRUE),          
+    Day = day(Date_Time),                             
+    Season = case_when(                               
+      Month %in% c("Dec", "Jan", "Feb") ~ "Summer",
+      Month %in% c("Mar", "Apr", "May") ~ "Autumn",
+      Month %in% c("Jun", "Jul", "Aug") ~ "Winter",
+      Month %in% c("Sep", "Oct", "Nov") ~ "Spring",
+      TRUE ~ NA_character_),
+    Date_Time_Numeric = as.numeric(Date_Time))
+
 
 
 # Calculate Substrate Index (s) ------------------------------------------------
-# Define the lake order
-lake_order <- c("Rotorua", "Rotoiti", "Rotoehu", "Rotomā", "Ōkāreka")
-
-# Sediment analysis
-# Define a custom color palette
-sediment_colors <- c(
-  "Bedrock" = "gray50",
-  "Boulders" = "gray30",
-  "Cobble" = "brown",
-  "Gravel" = "burlywood",
-  "Sand" = "gold",
-  "Mud" = "saddlebrown",
-  "Organic_matter" = "darkgreen",
-  "Turf" = "forestgreen")
-
-# Select relevant columns and reshape the data
-sediment_data <- M_C_data %>%
-  select(Monitoring_ID,DHT , Lake, Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf) %>%
-  pivot_longer(cols = c(Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf), 
-               names_to = "Sediment_Type", values_to = "Percentage") %>%
-                 mutate(Lake = factor(Lake, levels = lake_order))
-
-
-weed_data <- M_C_data %>%
-  select(Monitoring_ID,DHT , Lake, Emergent_weed, Submerged_weed,Wood_cover) %>%
-  pivot_longer(cols = c(Emergent_weed, Submerged_weed,Wood_cover), 
-               names_to = "Weeds", values_to = "Percentage") %>%
-  mutate(Lake = factor(Lake, levels = lake_order))
-
-presence_data <- M_C_data %>%
-  select(Monitoring_ID, DHT, Lake, Presence_Kōura,Presence_Catfish,Presence_Mosquitofish, Presence_Bullies, Presence_Kōaro, Presence_Common_smelt, Presence_Trout, Presence_Morihana, Presence_Eel) %>%
-  pivot_longer(cols = c(Presence_Kōura,Presence_Bullies,Presence_Catfish,Presence_Mosquitofish, Presence_Kōaro, Presence_Common_smelt, Presence_Trout, Presence_Morihana, Presence_Eel),
-               names_to = "Fish_Type",values_to = "Presence")%>%
-  mutate(Lake = factor(Lake, levels = lake_order))
-
-# Plot the data
-ggplot(sediment_data, aes(x = factor(Monitoring_ID), y = Percentage, fill = Sediment_Type)) +
-  geom_bar(stat = "identity", position = "stack") +
-  scale_fill_manual(values = sediment_colors) +
-  labs(title = "Sediment Composition by Site",x = "Site ID",y = "Percentage (%)",fill = "Sediment Type") +
-  facet_grid(DHT ~ Lake, scales = "free_x") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0))
-
-ggplot(weed_data, aes(x = factor(Monitoring_ID), y = Percentage, fill = Weeds)) +
-  geom_bar(stat = "identity", position = "stack") +
-  facet_grid(DHT ~ Lake, scales = "free_x") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0))
-
-ggplot(presence_data, aes(x = factor(Monitoring_ID), y = Presence, fill = Fish_Type)) +
-  geom_bar(stat = "identity", position = "stack") +
-  labs(title = "Fish Presence by Site", x = "Site ID",y = "Presence", fill = "Fish Type") +
-  facet_grid(DHT ~ Lake, scales = "free_x") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
 
 # Define weights for each substrate (this can be adjusted)
@@ -155,12 +116,163 @@ variables <- c("Presence_Kōura","Total_Individuals_Kōura","Weighted_CPUE_Kōur
 
 
 Numeric_variables <- M_C_data %>% select_if(is.numeric) %>% names()
-# Make some plots to explore the data ------------------------------------------
 
-ggplot(M_C_data, aes(factor(Monitoring_ID), Weighted_CPUE_Kōura, fill=Lake)) +
+Selected_variables <- c("Distance_deep","TLI","Temperature","Presence_Morihana","Presence_Eel","Overhanging_trees")
+
+
+# Make some plots to explore the data ------------------------------------------
+names(M_C_data)
+# Define the lake order
+lake_order <- c("Rotorua", "Rotoiti", "Rotoehu", "Rotomā", "Ōkāreka")
+
+M_C_data$Lake <- factor(M_C_data$Lake, levels = lake_order)
+
+# Define a custom color palette
+sediment_colors <- c("Bedrock" = "gray50","Boulders" = "gray30","Cobble" = "brown","Gravel" = "burlywood","Sand" = "gold","Mud" = "saddlebrown","Organic_matter" = "darkgreen", "Turf" = "forestgreen")
+
+# Remake Physical parameters
+sediment_data <- M_C_data %>%
+  select(Monitoring_ID,DHT , Lake, Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf) %>%
+  pivot_longer(cols = c(Bedrock, Boulders, Cobble, Gravel, Sand, Mud, Organic_matter, Turf), 
+               names_to = "Sediment_Type", values_to = "Percentage") %>%
+  mutate(Lake = factor(Lake, levels = lake_order))
+
+weed_data <- M_C_data %>%
+  select(Monitoring_ID,DHT , Lake, Emergent_weed, Submerged_weed,Wood_cover) %>%
+  pivot_longer(cols = c(Emergent_weed, Submerged_weed,Wood_cover), 
+               names_to = "Weeds", values_to = "Percentage") %>%
+  mutate(Lake = factor(Lake, levels = lake_order))
+
+# Plot Physical parameters
+Sediment_plot <- ggplot(sediment_data, aes(factor(Monitoring_ID), Percentage, fill = Sediment_Type)) +
   geom_bar(stat = "identity", position = "stack") +
-  facet_wrap(~DHT, scales = "free")+
+  scale_fill_manual(values = sediment_colors) +
+  facet_grid( ~ Lake, scales = "free_x") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0))
+
+Weed_plot <- ggplot(weed_data, aes(factor(Monitoring_ID),Percentage, fill = Weeds)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_grid( ~ Lake, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0))
+
+Sediment_plot/Weed_plot
+
+ggplot(M_C_data, aes(Distance_deep,Weighted_CPUE_Kōura))+
+  geom_point(aes(col=Lake))
+
+
+# Remake Chemical parameters
+Chemical_data <- M_C_data %>%
+  select(Monitoring_ID,DHT,Lake,DO_mgl,DO_percent,Connectivity,pH) %>%
+  pivot_longer(cols = c(DO_mgl,DO_percent,Connectivity,pH), 
+               names_to = "Variable", values_to = "Values") %>%
+  mutate(Lake = factor(Lake, levels = lake_order))
+
+# Plot Chemical parameters
+CHEM <- ggplot(Chemical_data, aes(Lake, Values, fill = Lake)) +
+  geom_boxplot() +
+  facet_wrap(~ Variable, scales = "free", nrow = 1) +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    strip.background = element_rect(fill = "lightgrey"),
+    strip.text = element_text(size = 10))
+
+Temp <- ggplot(M_C_data, aes(Date, Temperature, fill = Lake)) +
+  geom_point(shape = 21) +
+  facet_wrap(~ "Temperature", scales = "free", nrow = 1) + 
+  labs(x = "Date", y = NULL) +
+  theme(legend.position = "bottom",strip.background = element_rect(fill = "lightgrey"),strip.text = element_text(size = 10))
+
+(CHEM + Temp + plot_layout(widths = c(4, 1))) +
+  plot_layout(guides = "collect") & theme(legend.position = "right")
+
+
+# Remake Biological parameters
+fish_order <- c("Presence_Kōura","Presence_Eel","Presence_Kōaro","Presence_Common_smelt","Presence_Bullies","Presence_Catfish","Presence_Morihana","Presence_Mosquitofish","Presence_Trout")
+fish_order_CPUE <- c("Weighted_CPUE_Kōura", "Weighted_CPUE_Eel", "Weighted_CPUE_Kōaro", "Weighted_CPUE_Common_smelt", "Weighted_CPUE_Bullies", "Weighted_CPUE_Catfish", "Weighted_CPUE_Morihana", "Weighted_CPUE_Mosquitofish", "Weighted_CPUE_Trout")
+fish_order_BCUE <- c("Weighted_BCUE_Kōura", "Weighted_BCUE_Eel", "Weighted_BCUE_Kōaro", "Weighted_BCUE_Common_smelt", "Weighted_BCUE_Bullies", "Weighted_BCUE_Catfish", "Weighted_BCUE_Morihana", "Weighted_BCUE_Mosquitofish", "Weighted_BCUE_Trout")
+
+presence_data <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake, Presence_Kōura, Presence_Eel, Presence_Kōaro, Presence_Common_smelt, Presence_Bullies, Presence_Catfish, Presence_Morihana, Presence_Mosquitofish, Presence_Trout) %>%
+  pivot_longer(cols = c(Presence_Kōura, Presence_Eel, Presence_Kōaro, Presence_Common_smelt, Presence_Bullies, Presence_Catfish, Presence_Morihana, Presence_Mosquitofish, Presence_Trout),names_to = "Fish_Type", values_to = "Presence") %>%
+  mutate(Lake = factor(Lake, levels = lake_order),Fish_Type = factor(Fish_Type, levels = fish_order))
+
+CPUE_data <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake, Weighted_CPUE_Kōura, Weighted_CPUE_Eel, Weighted_CPUE_Kōaro, Weighted_CPUE_Common_smelt, Weighted_CPUE_Bullies, Weighted_CPUE_Catfish, Weighted_CPUE_Morihana, Weighted_CPUE_Mosquitofish, Weighted_CPUE_Trout) %>%
+  pivot_longer(cols = c(Weighted_CPUE_Kōura, Weighted_CPUE_Eel, Weighted_CPUE_Kōaro, Weighted_CPUE_Common_smelt, Weighted_CPUE_Bullies, Weighted_CPUE_Catfish, Weighted_CPUE_Morihana, Weighted_CPUE_Mosquitofish, Weighted_CPUE_Trout),names_to = "Fish_Type", values_to = "CPUE") %>%
+  mutate(Lake = factor(Lake, levels = lake_order),Fish_Type = factor(Fish_Type, levels = fish_order_CPUE))
+
+BCUE_data <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake, Weighted_BCUE_Kōura, Weighted_BCUE_Eel, Weighted_BCUE_Kōaro, Weighted_BCUE_Common_smelt, Weighted_BCUE_Bullies, Weighted_BCUE_Catfish, Weighted_BCUE_Morihana, Weighted_BCUE_Mosquitofish, Weighted_BCUE_Trout) %>%
+  pivot_longer(cols = c(Weighted_BCUE_Kōura, Weighted_BCUE_Eel, Weighted_BCUE_Kōaro, Weighted_BCUE_Common_smelt, Weighted_BCUE_Bullies, Weighted_BCUE_Catfish, Weighted_BCUE_Morihana, Weighted_BCUE_Mosquitofish, Weighted_BCUE_Trout),names_to = "Fish_Type", values_to = "BCUE") %>%
+  mutate(Lake = factor(Lake, levels = lake_order),Fish_Type = factor(Fish_Type, levels = fish_order_BCUE))
+
+BCUE_summary <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake, Weighted_BCUE_Kōura, Weighted_BCUE_Eel, Weighted_BCUE_Kōaro, Weighted_BCUE_Common_smelt, Weighted_BCUE_Bullies, Weighted_BCUE_Catfish, Weighted_BCUE_Morihana, Weighted_BCUE_Mosquitofish, Weighted_BCUE_Trout) %>%
+  pivot_longer(cols = c(Weighted_BCUE_Kōura, Weighted_BCUE_Eel, Weighted_BCUE_Kōaro, Weighted_BCUE_Common_smelt, Weighted_BCUE_Bullies, Weighted_BCUE_Catfish, Weighted_BCUE_Morihana, Weighted_BCUE_Mosquitofish, Weighted_BCUE_Trout),names_to = "Fish_Type", values_to = "BCUE") %>%
+  mutate(Lake = factor(Lake, levels = lake_order),Fish_Type = factor(Fish_Type, levels = fish_order_BCUE)) %>%
+  group_by(Lake, DHT, Fish_Type) %>%
+  summarise(mean_BCUE = mean(BCUE, na.rm = TRUE),se_BCUE = sd(BCUE, na.rm = TRUE) / sqrt(n()),.groups = "drop")
+
+Total_Weight_summary <- M_C_data %>%
+  select(Monitoring_ID, DHT, Lake,Total_Weight_Bullies, Total_Weight_Morihana, Total_Weight_Kōura,Total_Weight_Common_smelt, Total_Weight_Eel, Total_Weight_Kōaro,Total_Weight_Trout, Total_Weight_Mosquitofish, Total_Weight_Catfish) %>%
+  pivot_longer(cols = c(Total_Weight_Bullies, Total_Weight_Morihana, Total_Weight_Kōura,Total_Weight_Common_smelt, Total_Weight_Eel, Total_Weight_Kōaro,Total_Weight_Trout, Total_Weight_Mosquitofish, Total_Weight_Catfish),
+    names_to = "Fish_Type", values_to = "Total_Weight") %>%
+  mutate(Lake = factor(Lake, levels = lake_order)) %>%
+  group_by(Fish_Type) %>%
+  summarise(Total_Weight = sum(Total_Weight, na.rm = TRUE),.groups = "drop")
+
+
+# Plot Biological parameters
+ggplot(presence_data, aes(Lake, Presence, fill = Fish_Type)) +
+  geom_bar(stat = "identity", position = "stack") 
+  #facet_wrap( ~ Lake, scales = "free_x") +
+  #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+ggplot(CPUE_data, aes(Lake, CPUE, fill = Fish_Type)) +
+  geom_boxplot()
+  #facet_grid( ~ DHT, scales = "free_x") +
+  #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+ggplot(BCUE_data, aes(Lake, BCUE, fill = Fish_Type)) +
+  geom_boxplot()
+  #facet_grid( ~ DHT, scales = "free_x") +
+  #theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+ggplot(BCUE_summary, aes(Lake, mean_BCUE, fill = Fish_Type)) +
+  geom_col(position = "dodge") +
+  geom_errorbar(aes(ymin = mean_BCUE - se_BCUE, ymax = mean_BCUE + se_BCUE),position = position_dodge(width = 0.9), width = 0.2) +
+  facet_grid( ~ DHT, scales = "free_x") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+# Koura plots
+plot1 <- M_C_data %>%
+  filter(DHT != "Muddy") %>%
+  ggplot(aes(Lake, Total_Individuals_Kōura, fill = Lake)) +
+  geom_boxplot() +
+  facet_grid(~ DHT, scales = "free") +
+  theme(axis.title.x = element_blank())
+
+plot2 <- M_C_data %>%
+  filter(DHT != "Muddy") %>%
+  ggplot(aes(Lake, Weighted_CPUE_Kōura, fill = Lake)) +
+  geom_boxplot() +
+  facet_grid(~ DHT, scales = "free") +
+  theme(axis.title.x = element_blank())
+
+plot3 <- M_C_data %>%
+  filter(DHT != "Muddy") %>%
+  ggplot(aes(Lake, Weighted_BCUE_Kōura, fill = Lake)) +
+  geom_boxplot() +
+  facet_grid(~ DHT, scales = "free") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .3))
+
+plot1 / plot2 / plot3
+
+
+
 
 ggplot(M_C_data, aes(Distance_deep,Weighted_CPUE_Kōura, col=Lake)) +
   geom_point()
@@ -383,9 +495,11 @@ for (var in variables) {
 # Create the pair plot
 pairs(M_C_data[, variables])
 
-plot(M_C_data$Weighted_CPUE_Kōura, M_C_data$Date_Time_Numeric)
+pairs(M_C_data[, Selected_variables])
 
-# Correlation matrix ---------------Lake# Correlation matrix -------------------------------------------------Lake# Correlation matrix -----------------------------------------------------------
+plot(M_C_data$Weighted_CPUE_Kōura, M_C_data$TLI)
+
+# Correlation matrix -----------------------------------------------------------
 library(reshape2)
 
 cor_matrix <- cor(M_C_data[, variables], method = "spearman")  # "pearson", "spearman", "kendall" # spearman chosen as
@@ -414,14 +528,15 @@ strong_correlations <- cor_matrix_melted %>%
 library(mgcv)
 
 # Fit the GAM model with adjusted degrees of freedom (k)
-gam_model <- gam(Weighted_CPUE_Kōura ~ s(Boulders, k = 3) + s(Overhanging_trees, k = 3) + 
+gam_model <- gam(Weighted_CPUE_Kōura ~ s(Weighted_CPUE_Kōura, k = 3) + s(Overhanging_trees, k = 3) + 
                     s(Weighted_CPUE_Morihana, k = 4),
                  family = poisson(link = "log"),
                  data = M_C_data)
 
-gam_model <- gam(Presence_Kōura ~ s(Presence_Morihana, k = 1), 
-                 family = binomial(link = "logit"), 
+gam_model <- gam(Weighted_CPUE_Kōura ~ Selected_variables, 
+                 family = poisson(link = "log"), 
                  data = M_C_data)
+
 plot(gam_model, pages = 1)
 
 # Summarize the model
